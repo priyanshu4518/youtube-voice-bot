@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><link rel="stylesheet" href="popup.css"></head>
+<body>
+  <h1>YouTube AI Assistant</h1>
+  <div id="status">Loading…</div>
+  <form id="form">
+    <input id="question" placeholder="Ask about the video so far…" autocomplete="off" disabled>
+    <button id="ask" disabled>Ask</button>
+  </form>
+  <div id="loader" hidden><span class="spinner"></span> Thinking…</div>
+  <div id="error" hidden></div>
+  <div id="answer"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

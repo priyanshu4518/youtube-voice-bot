@@ -1,0 +1,11 @@
+body { width: 380px; font: 14px system-ui, sans-serif; margin: 12px; }
+h1 { font-size: 16px; margin: 0 0 8px; }
+#status { color: #666; font-size: 12px; margin-bottom: 8px; }
+form { display: flex; gap: 6px; }
+input { flex: 1; padding: 6px; }
+#error { color: #b00020; margin-top: 8px; }
+#answer { margin-top: 10px; white-space: pre-wrap; line-height: 1.4; }
+#answer a { color: #065fd4; cursor: pointer; font-weight: 600; }
+.spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid #ccc;
+  border-top-color: #065fd4; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }

@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+youtube-transcript-api
+google-genai
+sentence-transformers
+numpy
