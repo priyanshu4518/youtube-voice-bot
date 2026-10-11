@@ -30,6 +30,11 @@ function showError(msg) {
   $("error").hidden = !msg;
 }
 
+function setStatus(text, state) {
+  $("status").textContent = text;
+  $("status").className = "status " + state;
+}
+
 function toSeconds(str) {
   return str.split(":").reduce((a, n) => a * 60 + Number(n), 0);
 }
@@ -63,12 +68,13 @@ async function init() {
     if (!tab.url || !tab.url.includes("youtube.com/watch")) throw new Error("Open a YouTube video first.");
     const [{ result }] = await chrome.scripting.executeScript({ target: { tabId }, func: readPage });
     videoId = result.videoId;
-    $("status").textContent = "Preparing transcript for " + videoId + "…";
+    setStatus("Preparing transcript…", "loading");
     const t = await post("/transcript", { video_id: videoId });
-    $("status").textContent = "Ready · " + t.chunks.length + " transcript chunks";
+    setStatus("Ready · " + t.chunks.length + " transcript chunks", "ready");
     $("question").disabled = $("ask").disabled = false;
+    $("question").focus();
   } catch (e) {
-    $("status").textContent = "";
+    setStatus("Unavailable", "error");
     showError(e.message);
   }
 }
@@ -86,6 +92,7 @@ $("form").onsubmit = async (e) => {
     if (result.currentTime == null) throw new Error("No video player found on the page.");
     const data = await post("/ask", { video_id: videoId, question, current_time: result.currentTime });
     renderAnswer(data.answer);
+    $("hint").hidden = true;
   } catch (err) {
     showError(err.message);
   } finally {

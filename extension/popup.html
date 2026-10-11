@@ -2,15 +2,33 @@
 <html>
 <head><meta charset="utf-8"><link rel="stylesheet" href="popup.css"></head>
 <body>
-  <h1>YouTube AI Assistant</h1>
-  <div id="status">Loading…</div>
+  <header>
+    <div class="logo">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg>
+    </div>
+    <div class="titles">
+      <h1>YouTube AI Assistant</h1>
+      <p class="subtitle">Answers from what's been said so far</p>
+    </div>
+  </header>
+
+  <div id="status" class="status loading">Loading…</div>
+
   <form id="form">
     <input id="question" placeholder="Ask about the video so far…" autocomplete="off" disabled>
-    <button id="ask" disabled>Ask</button>
+    <button id="ask" disabled aria-label="Ask">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10l12.6 2-12.6 2z"/></svg>
+    </button>
   </form>
-  <div id="loader" hidden><span class="spinner"></span> Thinking…</div>
+
+  <div id="loader" hidden>
+    <span class="dots"><i></i><i></i><i></i></span> Thinking…
+  </div>
   <div id="error" hidden></div>
   <div id="answer"></div>
+
+  <p class="hint" id="hint">Tip: click a <span class="chip">[1:23]</span> timestamp in an answer to jump there.</p>
+
   <script src="popup.js"></script>
 </body>
 </html>
