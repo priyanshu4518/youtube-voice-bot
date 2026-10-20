@@ -5,3 +5,4 @@ youtube-transcript-api
 google-genai
 sentence-transformers
 numpy
+cartesia>=4.2,<5
