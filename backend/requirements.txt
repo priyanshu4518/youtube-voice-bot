@@ -3,6 +3,7 @@ uvicorn[standard]
 python-dotenv
 youtube-transcript-api
 google-genai
+httpx
 sentence-transformers
 numpy
 cartesia>=4.2,<5

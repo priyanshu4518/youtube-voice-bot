@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from google import genai
+from google.genai import errors as genai_errors
 from pydantic import BaseModel, Field
 
 import gemini
@@ -16,6 +17,16 @@ from transcript import TranscriptError, fetch_transcript
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 GEN_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+# Tried in order when the main model is overloaded (503) or rate limited (429).
+FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-2.5-flash").split(",") if m.strip()]
+GEN_MODELS = list(dict.fromkeys([GEN_MODEL, *FALLBACK_MODELS]))
+# Fallback when Gemini fails: OpenRouter models tried in order. Disabled if no key is set.
+OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_MODELS = [
+    m.strip()
+    for m in os.getenv("OPENROUTER_MODELS", "nvidia/nemotron-3-ultra-550b-a55b:free,thinkingmachines/inkling:free").split(",")
+    if m.strip()
+]
 client = genai.Client(api_key=API_KEY) if API_KEY else None
 
 CARTESIA_KEY = os.getenv("CARTESIA_API_KEY")
@@ -70,7 +81,12 @@ def ask(req: AskReq):
         hits = retrieval.search(req.video_id, req.question, req.current_time)
         if not hits:
             return {"answer": "Nothing has been said yet at this point in the video.", "sources": []}
-        answer = gemini.generate_answer(client, GEN_MODEL, req.question, hits, req.current_time)
+        answer = gemini.generate_answer(client, GEN_MODELS, req.question, hits, req.current_time,
+                                        OPENROUTER_KEY, OPENROUTER_MODELS)
+    except genai_errors.APIError as e:
+        if e.code in gemini.RETRY_CODES:
+            raise HTTPException(503, "Gemini is busy right now (high demand). Please try again in a minute.")
+        raise HTTPException(502, f"Gemini request failed: {e}")
     except Exception as e:
         raise HTTPException(502, f"Gemini request failed: {e}")
     return {"answer": answer, "sources": [{"start": h["start"], "text": h["text"]} for h in hits]}
