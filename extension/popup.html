@@ -16,6 +16,10 @@
 
   <form id="form">
     <input id="question" placeholder="Ask about the video so far…" autocomplete="off" disabled>
+    <button id="mic" class="mic" type="button" disabled aria-label="Ask by voice" aria-pressed="false" title="Ask by voice">
+      <svg class="icon-mic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/></svg>
+      <svg class="icon-stop" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
+    </button>
     <button id="ask" disabled aria-label="Ask">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10l12.6 2-12.6 2z"/></svg>
     </button>
@@ -26,6 +30,14 @@
   </div>
   <div id="error" hidden></div>
   <div id="answer"></div>
+
+  <div id="speech" hidden>
+    <button id="speak" class="speak" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
+      <span id="speak-label">Speak answer</span>
+    </button>
+    <audio id="player" controls hidden></audio>
+  </div>
 
   <p class="hint" id="hint">Tip: click a <span class="chip">[1:23]</span> timestamp in an answer to jump there.</p>
 
