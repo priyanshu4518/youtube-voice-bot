@@ -40,6 +40,11 @@ app = FastAPI(title="YouTube AI Assistant")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
+@app.on_event("startup")
+def _load_embedding_model() -> None:
+    retrieval.load_model()
+
+
 class TranscriptReq(BaseModel):
     video_id: str
 

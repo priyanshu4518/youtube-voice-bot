@@ -1,9 +1,13 @@
 """Chunking, local embeddings (all-MiniLM-L6-v2), timestamp filtering and similarity search."""
+from pathlib import Path
+
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
 CHUNK_SECONDS = 30.0
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+# Weights are downloaded once into this folder, then always loaded from disk (no network).
+MODEL_DIR = Path(__file__).parent / "models" / "all-MiniLM-L6-v2"
 _cache: dict[str, dict] = {}  # video_id -> {"chunks": [...], "vectors": np.ndarray}
 _model: SentenceTransformer | None = None
 
@@ -11,8 +15,17 @@ _model: SentenceTransformer | None = None
 def _get_model() -> SentenceTransformer:
     global _model
     if _model is None:
-        _model = SentenceTransformer(MODEL_NAME)
+        if MODEL_DIR.exists():
+            _model = SentenceTransformer(str(MODEL_DIR), local_files_only=True)
+        else:
+            _model = SentenceTransformer(MODEL_NAME)
+            _model.save(str(MODEL_DIR))
     return _model
+
+
+def load_model() -> None:
+    """Load the embedding model up front so the first request doesn't pay for it."""
+    _get_model()
 
 
 def _embed(texts: list[str]) -> np.ndarray:
