@@ -36,6 +36,27 @@ async function post(path, body) {
   return res.json().catch(() => ({}));
 }
 
+// Reads /ask/stream (one JSON event per line) and calls onText with the answer so far,
+// so text appears as the model generates it. Returns the full answer.
+async function askStream(body, onText) {
+  const res = await request("/ask/stream", body);
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = "", answer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const lines = (buf += value).split("\n");
+    buf = lines.pop(); // keep a partial line for the next read
+    for (const line of lines) {
+      if (!line) continue;
+      const ev = JSON.parse(line);
+      if (ev.type === "delta") onText((answer += ev.text));
+      else if (ev.type === "error") throw new Error(ev.detail);
+    }
+  }
+  return answer;
+}
+
 function showError(msg) {
   $("error").textContent = msg;
   $("error").hidden = !msg;
@@ -94,6 +115,49 @@ function stopSpeech() {
   setSpeakState("idle");
 }
 
+// Resolves when `type` fires on `target`; rejects with AbortError if the speech request is cancelled first.
+function once(target, type, signal) {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    target.addEventListener(type, () => { signal.removeEventListener("abort", onAbort); resolve(); }, { once: true });
+  });
+}
+
+function startPlayback(p) {
+  p.hidden = false;
+  setSpeakState("playing");
+  // If Chrome blocks autoplay, the visible controls still let the user press play.
+  return p.play().catch((e) => { if (e.name !== "NotAllowedError" && e.name !== "AbortError") throw e; });
+}
+
+// Plays the MP3 while it is still downloading (MediaSource), so audio starts as soon as the
+// backend streams the first bytes instead of after the whole clip is synthesized.
+async function playStream(res, p, signal) {
+  const ms = new MediaSource();
+  audioUrl = URL.createObjectURL(ms);
+  p.src = audioUrl;
+  await once(ms, "sourceopen", signal);
+  const sb = ms.addSourceBuffer("audio/mpeg");
+  const reader = res.body.getReader();
+  let started = false;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    sb.appendBuffer(value);
+    await once(sb, "updateend", signal);
+    if (!started) {
+      started = true;
+      startPlayback(p).catch(() => {
+        stopSpeech(); // aborts this download too
+        showError("Could not play the generated audio.");
+      });
+    }
+  }
+  if (!started) throw new Error("The backend returned no audio.");
+  ms.endOfStream();
+}
+
 async function speak() {
   stopSpeech(); // never let two clips overlap
   if (!answerText.trim()) return showError("There is no answer to speak yet.");
@@ -102,17 +166,18 @@ async function speak() {
   setSpeakState("loading");
   try {
     const res = await request("/speak", { text: answerText }, ctl.signal);
-    const blob = await res.blob();
-    if (!blob.size) throw new Error("The backend returned no audio.");
-    audioUrl = URL.createObjectURL(blob);
     const p = $("player");
-    p.src = audioUrl;
-    p.hidden = false;
-    setSpeakState("playing");
-    // If Chrome blocks autoplay, the visible controls still let the user press play.
-    await p.play().catch((e) => { if (e.name !== "NotAllowedError") throw e; });
+    if (res.body && window.MediaSource && MediaSource.isTypeSupported("audio/mpeg")) {
+      await playStream(res, p, ctl.signal);
+    } else {
+      const blob = await res.blob();
+      if (!blob.size) throw new Error("The backend returned no audio.");
+      audioUrl = URL.createObjectURL(blob);
+      p.src = audioUrl;
+      await startPlayback(p);
+    }
   } catch (err) {
-    if (err.name === "AbortError") return;
+    if (err.name === "AbortError" || ctl.signal.aborted) return;
     stopSpeech();
     showError(err.message || "Could not play the generated audio.");
   } finally {
@@ -250,10 +315,12 @@ $("form").onsubmit = async (e) => {
   try {
     const [{ result }] = await chrome.scripting.executeScript({ target: { tabId }, func: readPage });
     if (result.currentTime == null) throw new Error("No video player found on the page.");
-    const data = await post("/ask", { video_id: videoId, question, current_time: result.currentTime });
-    renderAnswer(data.answer);
-    answerText = data.answer || "";
-    $("speech").hidden = !answerText.trim();
+    const answer = await askStream({ video_id: videoId, question, current_time: result.currentTime }, (text) => {
+      $("loader").hidden = true;
+      renderAnswer(text);
+    });
+    answerText = answer.trim();
+    $("speech").hidden = !answerText;
     $("hint").hidden = true;
   } catch (err) {
     showError(err.message);

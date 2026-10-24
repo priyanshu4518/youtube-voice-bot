@@ -5,21 +5,28 @@ Answers are grounded **only in transcript content up to the current playback pos
 
 ```
 extension/   Chrome popup (HTML/CSS/JS) – reads video id + currentTime, calls the backend
-backend/     FastAPI
-  transcript.py   fetches transcript (adapted from test.py, youtube-transcript-api)
-  retrieval.py    30s chunking, local all-MiniLM-L6-v2 embeddings, timestamp filter, cosine search (numpy)
-  gemini.py       prompt building + answer generation
-  tts.py          Cartesia text-to-speech (Sonic), citation stripping
-  main.py         POST /transcript, POST /ask, POST /speak, CORS
+backend/     FastAPI (async)
+  main.py                  entry point (`uvicorn main:app`)
+  app/__init__.py          app factory: startup/shutdown, middleware, shared services
+  app/config.py            every setting, read once from .env
+  app/api.py               routes: /transcript, /ask, /ask/stream, /speak, /health
+  app/core/cache.py        LRU cache + single-flight request coalescing
+  app/core/timing.py       per-request latency log + Server-Timing header
+  app/services/transcript.py  fetches transcript (adapted from test.py, youtube-transcript-api)
+  app/services/retrieval.py   30s chunking, local all-MiniLM-L6-v2 embeddings, memory + disk index cache, search
+  app/services/llm.py         prompt building, streamed answers, Gemini -> OpenRouter failover and hedging
+  app/services/tts.py         Cartesia text-to-speech (Sonic), streamed audio, audio cache
 test.py      your original transcript script (unchanged)
 ```
 
+**Latency work:** see [OPTIMIZATIONS.md](OPTIMIZATIONS.md) for what was changed for speed, why, and the measured impact.
+
 ## How it works
 1. Popup reads the video id and `video.currentTime` from the active YouTube tab.
-2. `/transcript` fetches the transcript, splits it into ~30s timestamped chunks, embeds them locally with `all-MiniLM-L6-v2` (no API key; the model downloads on first use; cached in memory per video). Gemini is used only for the final answer.
-3. `/ask` **first drops every chunk whose start time is after `current_time`**, then ranks the remaining chunks by cosine similarity to the question and sends the top 5 to Gemini. The boundary chunk is also trimmed so text after the current position is never sent.
-4. The answer appears in the popup; `[m:ss]` citations are clickable and seek the video.
-5. **Speak answer** sends the answer text to `/speak`. The backend strips the `[m:ss]` citations, calls Cartesia's TTS API with the official Python SDK, and returns MP3 audio. The popup plays it with standard audio controls.
+2. `/transcript` fetches the transcript, splits it into ~30s timestamped chunks and returns. The chunks are then embedded locally with `all-MiniLM-L6-v2` in the background (no API key; the model downloads on first use), usually while you type. Each video's index is cached in memory and in `backend/cache/`, so it survives restarts. Gemini is used only for the final answer.
+3. `/ask/stream` **first drops every chunk whose start time is after `current_time`**, then ranks the remaining chunks by cosine similarity to the question and sends the top 5 to Gemini. The boundary chunk is also trimmed so text after the current position is never sent. If Gemini is slow or fails, OpenRouter is used (see [OPTIMIZATIONS.md](OPTIMIZATIONS.md)).
+4. The answer streams into the popup as it is generated; `[m:ss]` citations are clickable and seek the video.
+5. **Speak answer** sends the answer text to `/speak`. The backend strips the `[m:ss]` citations, calls Cartesia's TTS API with the official Python SDK, and streams MP3 audio back. The popup starts playing as soon as the first audio arrives, with standard audio controls.
 
 ## Run the backend
 ```powershell
@@ -49,12 +56,17 @@ Audio is MP3 at 44.1 kHz and 128 kbps. Speech text is limited to 5,000 character
 5. Click **Speak answer** under the answer. The button reads "Generating audio…" while the audio is generated. Playback then starts, and the player gives you pause, seek and volume. Click **Stop** to end playback. Starting a new clip or asking a new question stops the current one. Audio memory is freed when playback ends, when you stop it, or when you close the popup.
 
 ## Swapping the transcript source
-Edit only `fetch_transcript()` in `backend/transcript.py`. It must return `[{"text", "start", "duration"}, ...]` (seconds).
+Edit only `fetch_transcript()` in `backend/app/services/transcript.py`. It must return `[{"text", "start", "duration"}, ...]` (seconds).
 
 ## API
 - `POST /transcript` `{"video_id": "..."}` → `{"chunks": [{"start","end","text"}]}`
 - `POST /ask` `{"video_id","question","current_time"}` → `{"answer","sources":[{"start","text"}]}` (unchanged)
-- `POST /speak` `{"text"}` → `audio/mpeg` bytes. Errors return JSON `{"detail"}`:
+- `POST /ask/stream` same body as `/ask` → newline-delimited JSON (`application/x-ndjson`), one event per line:
+  `{"type":"sources","sources":[...]}`, then `{"type":"delta","text":"..."}` as text is generated, then `{"type":"done"}` or `{"type":"error","detail":"..."}`. Errors before the first text are normal HTTP errors, like `/ask`.
+- `GET /health` → model/cache/config status.
+- `video_id` must be an 11-character YouTube id; anything else returns 422.
+- Every response has a `Server-Timing` header with per-stage timings (DevTools → Network → Timing).
+- `POST /speak` `{"text"}` → `audio/mpeg` bytes, streamed. Errors return JSON `{"detail"}`:
   - 400: the text is empty, or contains only citations
   - 422: the text is missing or longer than 5,000 characters
   - 429: Cartesia rate limit
@@ -70,9 +82,9 @@ start speak.mp3
 ```
 
 ## Notes / limitations
-- Embedding cache is in-memory; it resets when the server restarts.
+- Video indexes are cached in memory and on disk in `backend/cache/`. Delete that folder to force transcripts to be fetched again.
 - Chunk embeddings of the chunk containing the current position may include a few seconds of later text; this only affects ranking, never the text sent to Gemini.
 - YouTube sometimes blocks transcript requests from cloud IPs; running locally is fine.
 - Voice input uses the browser's built-in Web Speech API (no API key, no cost). In Chrome it sends audio to Google's speech service, so it needs internet. It isn't available in Firefox and some Chromium forks (e.g. Brave); there the mic shows an "unsupported" message and typing still works.
 - If you blocked the microphone, re-allow it at `chrome://settings/content/microphone` (look for the extension's `chrome-extension://` entry).
-- Each **Speak answer** click makes a new Cartesia request, and each request uses Cartesia credits. Audio is not cached.
+- The first **Speak answer** for an answer makes a Cartesia request, which uses Cartesia credits. The audio is then cached in memory (`TTS_CACHE_MB`, default 64 MB), so speaking the same answer again is instant and free until the server restarts.
