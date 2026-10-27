@@ -4,7 +4,8 @@ A Chrome extension (Manifest V3) that answers questions about the YouTube video 
 Answers are grounded **only in transcript content up to the current playback position**, so there are no spoilers. Answers are text, and can optionally be read aloud with Cartesia's Sonic text-to-speech.
 
 ```
-extension/   Chrome popup (HTML/CSS/JS) – reads video id + currentTime, calls the backend
+extension/   Chrome extension: background.js opens panel.html (HTML/CSS/JS) in its own window,
+             which reads the video id + currentTime from the YouTube tab and calls the backend
 backend/     FastAPI (async)
   main.py                  entry point (`uvicorn main:app`)
   app/__init__.py          app factory: startup/shutdown, middleware, shared services
@@ -22,11 +23,11 @@ test.py      your original transcript script (unchanged)
 **Latency work:** see [OPTIMIZATIONS.md](OPTIMIZATIONS.md) for what was changed for speed, why, and the measured impact.
 
 ## How it works
-1. Popup reads the video id and `video.currentTime` from the active YouTube tab.
+1. The assistant window reads the video id and `video.currentTime` from the YouTube tab it was opened from (polled once a second, so it follows you to the next video).
 2. `/transcript` fetches the transcript, splits it into ~30s timestamped chunks and returns. The chunks are then embedded locally with `all-MiniLM-L6-v2` in the background (no API key; the model downloads on first use), usually while you type. Each video's index is cached in memory and in `backend/cache/`, so it survives restarts. Gemini is used only for the final answer.
 3. `/ask/stream` **first drops every chunk whose start time is after `current_time`**, then ranks the remaining chunks by cosine similarity to the question and sends the top 5 to Gemini. The boundary chunk is also trimmed so text after the current position is never sent. If Gemini is slow or fails, OpenRouter is used (see [OPTIMIZATIONS.md](OPTIMIZATIONS.md)).
-4. The answer streams into the popup as it is generated; `[m:ss]` citations are clickable and seek the video.
-5. **Speak answer** sends the answer text to `/speak`. The backend strips the `[m:ss]` citations, calls Cartesia's TTS API with the official Python SDK, and streams MP3 audio back. The popup starts playing as soon as the first audio arrives, with standard audio controls.
+4. The answer streams into the chat as it is generated; `[m:ss]` citations are clickable and seek the video.
+5. **Speak answer** sends the answer text to `/speak`. The backend strips the `[m:ss]` citations, calls Cartesia's TTS API with the official Python SDK, and streams MP3 audio back. Playback starts as soon as the first audio arrives.
 
 ## Run the backend
 ```powershell
@@ -51,9 +52,13 @@ Audio is MP3 at 44.1 kHz and 128 kbps. Speech text is limited to 5,000 character
 ## Load the extension
 1. Open `chrome://extensions`, enable **Developer mode**.
 2. **Load unpacked** → select the `extension/` folder.
-3. Open a YouTube video (`youtube.com/watch?v=...`), pause/play to any point, click the extension icon, wait for "Ready", and ask a question.
-4. **Voice input (optional, free):** click the 🎤 mic button next to the question box and speak. The words appear in the box as you talk; recognition stops after a pause (or click the button again to stop). Edit the text if needed, then press Enter/Send. The first time, Chrome can't show a mic prompt inside a popup, so the extension opens a small tab asking for microphone access; click **Allow**, the tab closes itself, then reopen the extension.
-5. Click **Speak answer** under the answer. The button reads "Generating audio…" while the audio is generated. Playback then starts, and the player gives you pause, seek and volume. Click **Stop** to end playback. Starting a new clip or asking a new question stops the current one. Audio memory is freed when playback ends, when you stop it, or when you close the popup.
+3. Open a YouTube video (`youtube.com/watch?v=...`) and click the extension icon. The assistant opens in its own window on the right half of the browser, and the YouTube window moves to the left half (turn this off with the side-by-side button in the top bar or in Settings; the YouTube window gets its old size back when you close the assistant). Wait for "Ready" and ask a question.
+4. **Chat:** answers stream in with clickable `[m:ss]` timestamps. Each answer has **Listen**, **Copy**, **Retry** and **Sources** (the transcript excerpts used). Chats are saved per video on this device; export one as Markdown or clear it from the buttons next to the tabs. The suggestion cards (Summarize, Key takeaways, Explain simply, Quiz me) ask common questions in one click.
+5. **Video card:** title, thumbnail and a live progress bar. Play/pause, skip ±10s, or click the bar to seek.
+6. **Transcript tab:** shows only what has been said so far (later lines unlock as you watch), highlights the current line, and lets you search it. Click a line to jump there, or **Ask** to ask about it.
+7. **Voice input (optional, free):** click the mic and speak. The words appear in the box as you talk; recognition stops after a pause (or click the button again). The first time, Chrome asks for microphone access in the assistant window. Turn on *Send voice questions when I stop talking* in Settings for hands-free use.
+8. **Read aloud:** click **Listen** under an answer, or turn on *Read answers aloud automatically*. A bar above the input lets you pause or stop; set the speech speed in Settings. Starting a new clip or asking a new question stops the current one.
+9. **Settings** (gear icon): theme (system/light/dark), text size, voice options, side-by-side snapping, clear all chats. Shortcuts: `Enter` send, `Shift+Enter` new line, `/` focus the input, `Esc` stop generating, listening or speech.
 
 ## Swapping the transcript source
 Edit only `fetch_transcript()` in `backend/app/services/transcript.py`. It must return `[{"text", "start", "duration"}, ...]` (seconds).
